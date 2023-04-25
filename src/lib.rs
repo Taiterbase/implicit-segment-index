@@ -1,5 +1,5 @@
 // https://en.algorithmica.org/hpc/data-structures/binary-search#eytzinger-layout
-// github.com/cockroachdb/pebble
+// https://github.com/cockroachdb/pebble
 // Few assumptions:
 // - data provided to the index is in time ascending order.
 // - data is immutable.
@@ -18,6 +18,7 @@ impl Default for Span {
 }
 
 #[derive(Clone, Debug, Copy)]
+// ISegment is a segment of aggregations indexed by the ISegmentIndex.
 pub struct ISegment {
     pub span: Span,
     pub count: usize,
@@ -38,14 +39,16 @@ impl Default for ISegment {
     }
 }
 
+// ISegmentIndex is a data structure that answers aggr queries in O(log n) time.
 pub struct ISegmentIndex {
     pub tree: Vec<ISegment>,
 }
 
 impl ISegmentIndex {
     pub fn new(span: Span) -> Self {
-        // create a tree of size 2 * span + 1
-        let tree_size = 2 * 2usize.pow(((span.end - span.start) as f64).log2().ceil() as u32) - 1;
+        // find the smallest power of 2 that is greater than or equal to the range of the span
+        // and then multiply it by 2 to account for the internal nodes in a complete binary tree.
+        let tree_size = 2 * (2usize.pow(((span.end - span.start) as f64).log2().ceil() as u32)) - 1;
         Self {
             tree: vec![ISegment::default(); tree_size],
         }
@@ -53,11 +56,9 @@ impl ISegmentIndex {
 
     pub fn build(&mut self, values: Vec<ISegment>, index: usize, left: usize, right: usize) {
         if left == right {
-            // leaf node
             self.tree[index] = values[left].clone();
         } else {
             let mid: usize = left + (right - left) / 2;
-            // cloning is expensive in this recursion!
             self.build(values.clone(), index * 2 + 1, left, mid);
             self.build(values.clone(), index * 2 + 2, mid + 1, right);
             self.tree[index] = ISegment {
@@ -149,6 +150,11 @@ mod tests {
         assert_eq!(
             tree.query_sum(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 }),
             6.0
+        );
+
+        assert_eq!(
+            tree.query_sum(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 }),
+            30.0
         );
     }
 }
