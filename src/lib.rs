@@ -4,8 +4,8 @@
 // - data provided to the index is in time ascending order.
 // - data is immutable.
 // - data is not sparse.
-#[derive(Clone, Debug, Copy)]
-// span is a half-open interval [start, end)
+#[derive(Clone, Debug, Copy, PartialEq)]
+// Span is a half-open interval [start, end)
 pub struct Span {
     pub start: u64,
     pub end: u64,
@@ -17,7 +17,7 @@ impl Default for Span {
     }
 }
 
-#[derive(Clone, Debug, Copy)]
+#[derive(Clone, Debug, Copy, PartialEq)]
 // ISegment is a segment of aggregations indexed by the ISegmentIndex.
 pub struct ISegment {
     pub span: Span,
@@ -78,19 +78,19 @@ impl ISegmentIndex {
         }
     }
 
-    pub fn query_sum(&self, index: usize, segment_span: Span, query_span: Span) -> f64 {
+    pub fn query(&self, index: usize, segment_span: Span, query_span: Span) -> Option<ISegment> {
         if query_span.end < segment_span.start || segment_span.end < query_span.start {
             // no overlap
-            return 0.0;
+            return None;
         }
 
         if query_span.start <= segment_span.start && segment_span.end <= query_span.end {
             // total overlap
-            return self.tree[index].sum;
+            return Some(self.tree[index]);
         }
 
         let mid: u64 = segment_span.start + (segment_span.end - segment_span.start) / 2;
-        let left_res = self.query_sum(
+        let left_res = self.query(
             index * 2 + 1,
             Span {
                 start: segment_span.start,
@@ -98,7 +98,7 @@ impl ISegmentIndex {
             },
             query_span,
         );
-        let right_res = self.query_sum(
+        let right_res = self.query(
             index * 2 + 2,
             Span {
                 start: mid + 1,
@@ -107,15 +107,29 @@ impl ISegmentIndex {
             query_span,
         );
 
-        return left_res + right_res;
+        match (left_res, right_res) {
+            (Some(left), Some(right)) => Some(ISegment {
+                span: Span {
+                    start: left.span.start,
+                    end: right.span.end,
+                },
+                count: left.count + right.count,
+                max: left.max.max(right.max),
+                min: left.min.min(right.min),
+                sum: left.sum + right.sum,
+            }),
+            (Some(left), None) => Some(left),
+            (None, Some(right)) => Some(right),
+            (None, None) => None,
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{ISegment, ISegmentIndex, Span};
-    #[test]
-    fn build() {
+
+    fn tree_data() -> (Vec<ISegment>, ISegmentIndex) {
         let mut data = vec![ISegment::default(); 6];
         for i in 0..data.len() {
             let time: u64 = i as u64 + 1;
@@ -131,30 +145,132 @@ mod tests {
                 },
             };
         }
-        let mut tree = ISegmentIndex::new(Span {
-            start: data[0].span.start,
-            end: data[data.len() - 1].span.end,
-        });
+
+        (
+            data.clone(),
+            ISegmentIndex::new(Span {
+                start: data[0].span.start,
+                end: data[data.len() - 1].span.end,
+            }),
+        )
+    }
+
+    #[test]
+    fn build() {
+        let (data, mut tree) = tree_data();
         tree.build(data.clone(), 0, 0, data.len() - 1);
         for i in 0..tree.tree.len() {
             println!("{:?}", tree.tree[i]);
         }
 
         assert_eq!(tree.tree[0].count, 6);
+    }
+
+    #[test]
+    fn sum() {
+        let (data, mut tree) = tree_data();
+        tree.build(data.clone(), 0, 0, data.len() - 1);
 
         assert_eq!(
-            tree.query_sum(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 }),
-            18.0
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
+                .unwrap()
+                .sum,
+            18.0,
         );
 
         assert_eq!(
-            tree.query_sum(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 }),
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
+                .unwrap()
+                .sum,
             6.0
         );
 
         assert_eq!(
-            tree.query_sum(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 }),
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
+                .unwrap()
+                .sum,
             30.0
+        );
+    }
+
+    #[test]
+    fn max() {
+        let (data, mut tree) = tree_data();
+        tree.build(data.clone(), 0, 0, data.len() - 1);
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
+                .unwrap()
+                .max,
+            8.0,
+        );
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
+                .unwrap()
+                .max,
+            4.0
+        );
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
+                .unwrap()
+                .max,
+            10.0
+        );
+    }
+
+    #[test]
+    fn min() {
+        let (data, mut tree) = tree_data();
+        tree.build(data.clone(), 0, 0, data.len() - 1);
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
+                .unwrap()
+                .min,
+            0.0,
+        );
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
+                .unwrap()
+                .min,
+            2.0
+        );
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
+                .unwrap()
+                .min,
+            2.0
+        );
+    }
+
+    #[test]
+    fn count() {
+        let (data, mut tree) = tree_data();
+        tree.build(data.clone(), 0, 0, data.len() - 1);
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
+                .unwrap()
+                .count,
+            3,
+        );
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
+                .unwrap()
+                .count,
+            2
+        );
+
+        assert_eq!(
+            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
+                .unwrap()
+                .count,
+            5
         );
     }
 }
