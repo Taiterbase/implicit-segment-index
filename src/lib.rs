@@ -1,3 +1,15 @@
+/*
+                                       [A+B+C+D+E+F+G+H+I+J+K+L+M+N+O]
+                __________________________________/        \________________________________
+            [A+B+C+D+E+F+G+H]                                      [I+J+K+L+M+N+O]
+          ______/      \_____                                  ______/      \_____
+     [A+B+C+D]              [E+F+G+H]                    [I+J+K+L]               [M+N+O]
+     /         \            /       \                    /       \               /       \
+ [A+B]         [C+D]    [E+F]      [G+H]          [I+J]       [K+L]         [M+N]       [O]
+ /   \         /   \    /   \      /   \          /   \       /   \         /   \
+A     B       C     D  E     F    G     H        I     J     K     L       M     N
+
+ */
 use std::collections::VecDeque;
 
 // https://en.algorithmica.org/hpc/data-structures/binary-search#eytzinger-layout
