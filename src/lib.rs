@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 // https://en.algorithmica.org/hpc/data-structures/binary-search#eytzinger-layout
 // https://github.com/cockroachdb/pebble
 // Few assumptions:
@@ -78,34 +80,69 @@ impl ISegmentIndex {
         }
     }
 
-    pub fn query(&self, index: usize, segment_span: Span, query_span: Span) -> Option<ISegment> {
-        if query_span.end < segment_span.start || segment_span.end < query_span.start {
+    pub fn query_bfs(&self, query_span: Span) -> Option<ISegment> {
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        queue.push_back(0);
+
+        let mut result: Option<ISegment> = None;
+
+        while let Some(i) = queue.pop_front() {
+            if i >= self.tree.len() {
+                return result;
+            }
+
+            if query_span.end < self.tree[i].span.start || self.tree[i].span.end < query_span.start
+            {
+                // no overlap
+                continue;
+            }
+
+            if query_span.start <= self.tree[i].span.start
+                && self.tree[i].span.end <= query_span.end
+            {
+                // total overlap
+                result = match result {
+                    Some(res) => Some(ISegment {
+                        span: Span {
+                            start: res.span.start.min(self.tree[i].span.start),
+                            end: res.span.start.max(self.tree[i].span.end),
+                        },
+                        count: res.count + self.tree[i].count,
+                        max: res.max.max(self.tree[i].max),
+                        min: res.min.min(self.tree[i].min),
+                        sum: res.sum + self.tree[i].sum,
+                    }),
+                    None => Some(self.tree[i]),
+                };
+                continue;
+            }
+            queue.push_back(i * 2 + 1);
+            queue.push_back(i * 2 + 2);
+        }
+        return result;
+    }
+
+    pub fn query_dfs(&self, index: usize, query_span: Span) -> Option<ISegment> {
+        if index >= self.tree.len() {
+            return None;
+        }
+
+        if query_span.end < self.tree[index].span.start
+            || self.tree[index].span.end < query_span.start
+        {
             // no overlap
             return None;
         }
 
-        if query_span.start <= segment_span.start && segment_span.end <= query_span.end {
+        if query_span.start <= self.tree[index].span.start
+            && self.tree[index].span.end <= query_span.end
+        {
             // total overlap
             return Some(self.tree[index]);
         }
 
-        let mid: u64 = segment_span.start + (segment_span.end - segment_span.start) / 2;
-        let left_res = self.query(
-            index * 2 + 1,
-            Span {
-                start: segment_span.start,
-                end: mid,
-            },
-            query_span,
-        );
-        let right_res = self.query(
-            index * 2 + 2,
-            Span {
-                start: mid + 1,
-                end: segment_span.end,
-            },
-            query_span,
-        );
+        let left_res = self.query_dfs(index * 2 + 1, query_span);
+        let right_res = self.query_dfs(index * 2 + 2, query_span);
 
         match (left_res, right_res) {
             (Some(left), Some(right)) => Some(ISegment {
@@ -132,7 +169,7 @@ mod tests {
     fn tree_data() -> (Vec<ISegment>, ISegmentIndex) {
         let mut data = vec![ISegment::default(); 6];
         for i in 0..data.len() {
-            let time: u64 = i as u64 + 1;
+            let time: u64 = i as u64;
             let val: f64 = i as f64 * 2.0;
             data[i] = ISegment {
                 count: 1,
@@ -171,24 +208,27 @@ mod tests {
         let (data, mut tree) = tree_data();
         tree.build(data.clone(), 0, 0, data.len() - 1);
 
+        for i in 0..data.len() {
+            print!("{:?} ", data[i].sum);
+        }
+        for i in 0..tree.tree.len() {
+            println!("{:?}", tree.tree[i]);
+        }
+
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
-                .unwrap()
-                .sum,
-            18.0,
+            tree.query_bfs(Span { start: 1, end: 6 },).unwrap().sum,
+            30.0,
         );
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
-                .unwrap()
-                .sum,
-            6.0
+            tree.query_bfs(Span { start: 1, end: 6 },).unwrap().sum,
+            30.0,
         );
 
+        assert_eq!(tree.query_bfs(Span { start: 1, end: 3 },).unwrap().sum, 6.0);
+
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
-                .unwrap()
-                .sum,
+            tree.query_bfs(Span { start: 0, end: 6 },).unwrap().sum,
             30.0
         );
     }
@@ -199,23 +239,17 @@ mod tests {
         tree.build(data.clone(), 0, 0, data.len() - 1);
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
-                .unwrap()
-                .max,
-            8.0,
+            tree.query_bfs(Span { start: 2, end: 6 },).unwrap().max,
+            10.0,
         );
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
-                .unwrap()
-                .max,
+            tree.query_dfs(0, Span { start: 1, end: 3 },).unwrap().max,
             4.0
         );
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
-                .unwrap()
-                .max,
+            tree.query_dfs(0, Span { start: 1, end: 7 },).unwrap().max,
             10.0
         );
     }
@@ -226,23 +260,17 @@ mod tests {
         tree.build(data.clone(), 0, 0, data.len() - 1);
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
-                .unwrap()
-                .min,
-            0.0,
+            tree.query_dfs(0, Span { start: 2, end: 6 },).unwrap().min,
+            4.0,
         );
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
-                .unwrap()
-                .min,
+            tree.query_dfs(0, Span { start: 1, end: 3 },).unwrap().min,
             2.0
         );
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
-                .unwrap()
-                .min,
+            tree.query_dfs(0, Span { start: 1, end: 7 },).unwrap().min,
             2.0
         );
     }
@@ -253,24 +281,22 @@ mod tests {
         tree.build(data.clone(), 0, 0, data.len() - 1);
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 2, end: 6 },)
-                .unwrap()
-                .count,
-            3,
+            tree.query_dfs(0, Span { start: 2, end: 6 },).unwrap().count,
+            4,
         );
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 3 },)
-                .unwrap()
-                .count,
+            tree.query_dfs(0, Span { start: 4, end: 6 },).unwrap().count,
             2
         );
 
         assert_eq!(
-            tree.query(0, Span { start: 0, end: 7 }, Span { start: 1, end: 7 },)
-                .unwrap()
-                .count,
+            tree.query_dfs(0, Span { start: 1, end: 6 },).unwrap().count,
             5
+        );
+        assert_eq!(
+            tree.query_dfs(0, Span { start: 0, end: 6 },).unwrap().count,
+            6
         );
     }
 }
